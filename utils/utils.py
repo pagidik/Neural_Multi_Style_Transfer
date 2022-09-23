@@ -1,22 +1,23 @@
+# Name: Sumegha Singhania, Kishore Reddy Pagidi
+# Date: 09/22/2022
+# Class name: CS7180 Advanced Perception
+
 import cv2 as cv
 import numpy as np
 import torch
 from torchvision import transforms
 import os
 import matplotlib.pyplot as plt
-
-
 from neural_style_transfer import  Vgg19
-
 
 IMAGENET_MEAN_255 = [123.675, 116.28, 103.53]
 IMAGENET_STD_NEUTRAL = [1, 1, 1]
-
 
 #
 # Image manipulation util functions
 #
 
+# Load the image as an numpy array as per the specified target shape 
 def load_image(img_path, target_shape=None):
     if not os.path.exists(img_path):
         raise Exception(f'Path does not exist: {img_path}')
@@ -36,36 +37,30 @@ def load_image(img_path, target_shape=None):
     img /= 255.0  # get to [0, 1] range
     return img
 
-
+# Load the image as an numpy array as per the specified target shape 
+# Apply image transform as per VGG normalization 
 def prepare_img(img_path, target_shape, device):
     img = load_image(img_path, target_shape=target_shape)
 
     # normalize using ImageNet's mean
-    # [0, 255] range worked much better for me than [0, 1] range (even though PyTorch models were trained on latter)
+    # [0, 255] range worked much better than [0, 1] range 
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Lambda(lambda x: x.mul(255)),
         transforms.Normalize(mean=IMAGENET_MEAN_255, std=IMAGENET_STD_NEUTRAL)
     ])
-
     img = transform(img).to(device).unsqueeze(0)
 
     return img
 
-
-def save_image(img, img_path):
-    if len(img.shape) == 2:
-        img = np.stack((img,) * 3, axis=-1)
-    cv.imwrite(img_path, img[:, :, ::-1])  # [:, :, ::-1] converts rgb into bgr (opencv contraint...)
-
-
+# Generates the image name with all the required paramters like content image name, style image names, optimizer etc.
 def generate_out_img_name(config):
-    prefix = os.path.basename(config['content_img_name']).split('.')[0] + '_' + os.path.basename(config['style_img_name']).split('.')[0]
+    prefix = os.path.basename(config['content_img_name']).split('.')[0] + '_' + os.path.basename(config['style_img_name']).split('.')[0] + '_' + os.path.basename(config['style_img_name_2']).split('.')[0]
     # called from the reconstruction script
     if 'reconstruct_script' in config:
         suffix = f'_o_{config["optimizer"]}_h_{str(config["height"])}_m_{config["model"]}{config["img_format"][1]}'
     else:
-        suffix = f'_o_{config["optimizer"]}_i_{config["init_method"]}_h_{str(config["height"])}_m_{config["model"]}_cw_{config["content_weight"]}_sw_{config["style_weight"]}_tv_{config["tv_weight"]}{config["img_format"][1]}'
+        suffix = f'_o_{config["optimizer"]}_i_{config["init_method"]}_h_{str(config["height"])}_m_{config["model"]}_cw_{config["content_weight"]}_sw_{config["style_weight"]}_sw_2_{config["style_weight_2"]}_tv_{config["tv_weight"]}{config["img_format"][1]}'
     return prefix + suffix
 
 
@@ -87,7 +82,7 @@ def save_and_maybe_display(optimizing_img, dump_path, config, img_id, num_of_ite
         plt.imshow(np.uint8(get_uint8_range(out_img)))
         plt.show()
 
-
+# Convert all values within the range of 0 to 255
 def get_uint8_range(x):
     if isinstance(x, np.ndarray):
         x -= np.min(x)
@@ -101,7 +96,6 @@ def get_uint8_range(x):
 #
 # End of image manipulation util functions
 #
-
 
 # initially it takes some time for PyTorch to download the models into local cache
 def prepare_model(model, device):
@@ -128,7 +122,7 @@ def prepare_model(model, device):
     style_fms_indices_names_2 = (style_feature_maps_indices_2, layer_names)
     return model.to(device).eval(), content_fms_index_name, style_fms_indices_names, style_fms_indices_names_2
 
-
+# calculate gram matix
 def gram_matrix(x, should_normalize=True):
     (b, ch, h, w) = x.size()
     features = x.view(b, ch, w * h)
@@ -138,7 +132,7 @@ def gram_matrix(x, should_normalize=True):
         gram /= ch * h * w
     return gram
 
-
+# calculate Total variation 
 def total_variation(y):
     return torch.sum(torch.abs(y[:, :, :, :-1] - y[:, :, :, 1:])) + \
            torch.sum(torch.abs(y[:, :, :-1, :] - y[:, :, 1:, :]))

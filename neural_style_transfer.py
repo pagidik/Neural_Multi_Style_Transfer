@@ -1,6 +1,8 @@
-import utils.utils as utils
-from utils.video_utils import create_video_from_intermediate_results
+# Name: Sumegha Singhania, Kishore Reddy Pagidi
+# Date: 09/22/2022
+# Class name: CS7180 Advanced Perception
 
+import utils.utils as utils
 import torch
 from torch.optim import Adam, LBFGS
 from torch.autograd import Variable
@@ -11,7 +13,9 @@ from collections import namedtuple
 import torch
 from torchvision import models
 
-
+# Model Definition - We can also use VGG16 a smaller network and does not need high computationas VGG 19
+# Note that we define the convolution layers that we want to extract for both content and style images
+# We could also use other layers but layer 4 captures the content in more hollistic way. 
 class Vgg19(torch.nn.Module):
     """
     Used in the original NST paper, only those layers are exposed which were used in the original paper
@@ -57,6 +61,7 @@ class Vgg19(torch.nn.Module):
             for param in self.parameters():
                 param.requires_grad = False
 
+    # forward propagation function definition
     def forward(self, x):
         x = self.slice1(x)
         layer1_1 = x
@@ -74,7 +79,10 @@ class Vgg19(torch.nn.Module):
         out = vgg_outputs(layer1_1, layer2_1, layer3_1, layer4_1, conv4_2, layer5_1)
         return out
 
-
+#  Loss Function to transfer style from Single images
+# Loss Function implemented as per the original paper.
+# Style is computed from the gram matrices
+# Total variance loss is also added to reduce noise in the images
 def build_loss(neural_net, optimizing_img, target_representations, content_feature_maps_index, style_feature_maps_indices, config):
     target_content_representation = target_representations[0]
     target_style_representation = target_representations[1]
@@ -96,11 +104,13 @@ def build_loss(neural_net, optimizing_img, target_representations, content_featu
 
     return total_loss, content_loss, style_loss, tv_loss
 
-#  Loss Function to transfer style from two images 
+# Loss Function to transfer style from two images 
+# Here we modify the loss function by computing gram matrices fo+r a second style image
+# Computing the loss and adding it to the total loss. 
 def build_loss_2(neural_net, optimizing_img, target_representations, content_feature_maps_index, style_feature_maps_indices,style_feature_maps_indices_2, config):
     target_content_representation = target_representations[0]
     target_style_representation = target_representations[1]
-    target_style_representation = target_representations[2]
+    target_style_representation_2 = target_representations[2]
 
     current_set_of_feature_maps = neural_net(optimizing_img)
 
@@ -115,9 +125,9 @@ def build_loss_2(neural_net, optimizing_img, target_representations, content_fea
 
     style_loss_2 =0.0
     current_content_representation_2 = [utils.gram_matrix(x) for cnt, x in enumerate(current_set_of_feature_maps) if cnt in style_feature_maps_indices_2]
-    for gram_gt, gram_hat in zip(target_style_representation, current_content_representation_2):
+    for gram_gt, gram_hat in zip(target_style_representation_2, current_content_representation_2):
         style_loss_2 += torch.nn.MSELoss(reduction='sum')(gram_gt[0], gram_hat[0])
-    style_loss_2 /=len(target_style_representation)
+    style_loss_2 /=len(target_style_representation_2)
 
     tv_loss = utils.total_variation(optimizing_img)
 
@@ -126,7 +136,7 @@ def build_loss_2(neural_net, optimizing_img, target_representations, content_fea
     return total_loss, content_loss, style_loss, style_loss_2, tv_loss
 
 
-
+# Optimization step for style from single image Backprop and optimization step
 def make_tuning_step(neural_net, optimizer, target_representations, content_feature_maps_index, style_feature_maps_indices, config):
     # Builds function that performs a step in the tuning loop
     def tuning_step(optimizing_img):
@@ -141,7 +151,7 @@ def make_tuning_step(neural_net, optimizer, target_representations, content_feat
     # Returns the function that will be called inside the tuning loop
     return tuning_step
 
-# Optimization step for multi style 
+# Optimization step (for ADAM optimizer) for style from multi images
 def make_tuning_step_2(neural_net, optimizer, target_representations, content_feature_maps_index, style_feature_maps_indices, style_feature_maps_indices_2, config):
     # Builds function that performs a step in the tuning loop
     def tuning_step(optimizing_img):
@@ -156,13 +166,13 @@ def make_tuning_step_2(neural_net, optimizer, target_representations, content_fe
     # Returns the function that will be called inside the tuning loop
     return tuning_step
 
-# Modified 
+# Read Images of content, style 1 and style 2 and set the output directory. 
+# The output images will have the name of all the three images used to generate it.
+# image preparation step is important which normalizes based on VGG 19 dataset it also resizes tha content and style images
 def neural_multi_style_transfer(config):
     content_img_path = os.path.join(config['content_images_dir'], config['content_img_name'])
     style_img_path = os.path.join(config['style_images_dir'], config['style_img_name'])
     style_img_path_2 = os.path.join(config['style_images_dir'], config['style_img_name_2'])
-
-
 
     out_dir_name = 'combined_' + os.path.split(content_img_path)[1].split('.')[0] + '_' + os.path.split(style_img_path)[1].split('.')[0] + '_' + os.path.split(style_img_path_2)[1].split('.')[0]
     dump_path = os.path.join(config['output_img_dir'], out_dir_name)
@@ -203,7 +213,6 @@ def neural_multi_style_transfer(config):
     target_style_representation_2 = [utils.gram_matrix(x) for cnt, x in enumerate(style_img_set_of_feature_maps_2) if cnt in style_feature_maps_indices_names_2[0]]
     target_representations = [target_content_representation, target_style_representation, target_style_representation_2]
 
-    # magic numbers in general are a big no no - some things in this code are left like this by design to avoid clutter
     num_of_iterations = {
         "lbfgs": 1000,
         "adam": 3000,
@@ -224,7 +233,8 @@ def neural_multi_style_transfer(config):
         # line_search_fn does not seem to have significant impact on result
         optimizer = LBFGS((optimizing_img,), max_iter=num_of_iterations['lbfgs'], line_search_fn='strong_wolfe')
         cnt = 0
-
+        
+        # Computes the build loss and optimizes using L-BFGS optimizer and returns the total loss.
         def closure():
             nonlocal cnt
             if torch.is_grad_enabled():
@@ -234,7 +244,7 @@ def neural_multi_style_transfer(config):
                 total_loss.backward()
             with torch.no_grad():
                 print(f'L-BFGS | iteration: {cnt:03}, total loss={total_loss.item():12.4f}, content_loss={config["content_weight"] * content_loss.item():12.4f}, style loss={config["style_weight"] * style_loss.item():12.4f}, style loss_2={config["style_weight_2"] * style_loss_2.item():12.4f}, tv loss={config["tv_weight"] * tv_loss.item():12.4f}')
-                utils.save_and_maybe_display(optimizing_img, dump_path, config, cnt, num_of_iterations[config['optimizer']], should_display=False)
+                utils.save_and_maybe_display(optimizing_img, dump_path, config, cnt, num_of_iterations[config['optimizer']], should_display=True)
 
             cnt += 1
             return total_loss
@@ -246,7 +256,7 @@ def neural_multi_style_transfer(config):
 
 if __name__ == "__main__":
     #
-    # fixed args - don't change these unless you have a good reason
+    # fixed args
     #
     default_resource_dir = os.path.join(os.path.dirname(__file__), 'data')
     content_images_dir = os.path.join(default_resource_dir, 'content-images')
@@ -255,14 +265,12 @@ if __name__ == "__main__":
     img_format = (4, '.jpg')  # saves images in the format: %04d.jpg
 
     #
-    # modifiable args - feel free to play with these (only small subset is exposed by design to avoid cluttering)
-    # sorted so that the ones on the top are more likely to be changed than the ones on the bottom
+    # modifiable args 
     #
     parser = argparse.ArgumentParser()
-    parser.add_argument("--should_reconstruct_content", type=str, help="Should Reconstruct Content should be set true for 2 style images", default=True)
     parser.add_argument("--content_img_name", type=str, help="content image name", default='figures.jpg')
-    parser.add_argument("--style_img_name", type=str, help="style image name", default='vg_starry_night.jpg')
-    parser.add_argument("--style_img_name_2", type=str, help="style image name", default='vg_la_cafe.jpg')
+    parser.add_argument("--style_img_name", type=str, help="style image name", default='tahiti_guaguin.jpg')
+    parser.add_argument("--style_img_name_2", type=str, help="style image name", default='okeffe_red_canna.png')
 
     parser.add_argument("--height", type=int, help="height of content and style images", default=400)
 
@@ -278,17 +286,6 @@ if __name__ == "__main__":
     parser.add_argument("--saving_freq", type=int, help="saving frequency for intermediate images (-1 means only final)", default=5)
     args = parser.parse_args()
 
-    # some values of weights that worked for figures.jpg, vg_starry_night.jpg (starting point for finding good images)
-    # once you understand what each one does it gets really easy -> also see README.md
-
-    # lbfgs, content init -> (cw, sw, tv) = (1e5, 3e4, 1e0)
-    # lbfgs, style   init -> (cw, sw, tv) = (1e5, 1e1, 1e-1)
-    # lbfgs, random  init -> (cw, sw, tv) = (1e5, 1e3, 1e0)
-
-    # adam, content init -> (cw, sw, tv, lr) = (1e5, 1e5, 1e-1, 1e1)
-    # adam, style   init -> (cw, sw, tv, lr) = (1e5, 1e2, 1e-1, 1e1)
-    # adam, random  init -> (cw, sw, tv, lr) = (1e5, 1e2, 1e-1, 1e1)
-
     # just wrapping settings into a dictionary
     optimization_config = dict()
     for arg in vars(args):
@@ -300,6 +297,3 @@ if __name__ == "__main__":
 
     # original NST (Neural Style Transfer) algorithm (Gatys et al.)
     results_path = neural_multi_style_transfer(optimization_config)
-
-    # uncomment this if you want to create a video from images dumped during the optimization procedure
-    create_video_from_intermediate_results(results_path, img_format)
